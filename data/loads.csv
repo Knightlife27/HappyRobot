@@ -1,0 +1,21 @@
+reference_number,origin,destination,equipment_type,rate,commodity
+12345,New York,Los Angeles,Dry Van,1500,Electronics
+67890,Chicago,Houston,Flatbed,1200,Machinery
+54321,Miami,Seattle,Reefer,2000,Perishables
+98765,Denver,Atlanta,Dry Van,1800,Furniture
+45678,Dallas,Portland,Flatbed,1600,Construction Materials
+11223,Boston,San Francisco,Dry Van,1700,Apparel
+33445,Atlanta,Las Vegas,Flatbed,1400,Automotive Parts
+55667,Seattle,Chicago,Reefer,1900,Food Products
+77889,Houston,New York,Dry Van,2100,Pharmaceuticals
+99000,Los Angeles,Dallas,Flatbed,1300,Industrial Equipment
+22334,Phoenix,Denver,Dry Van,1450,Retail Goods
+44556,Minneapolis,Orlando,Reefer,1750,Perishables
+66778,San Diego,Atlanta,Dry Van,1650,Electronics
+88991,Kansas City,Seattle,Flatbed,1550,Machinery
+10101,Portland,Miami,Reefer,1850,Food Products
+12123,Las Vegas,Chicago,Dry Van,1950,Apparel
+14145,Philadelphia,Houston,Flatbed,1250,Automotive Parts
+16167,San Antonio,New York,Dry Van,2200,Pharmaceuticals
+18189,Orlando,Los Angeles,Reefer,2050,Perishables
+20202,Detroit,Dallas,Flatbed,1350,Industrial Equipment

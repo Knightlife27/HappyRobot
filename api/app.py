@@ -1,8 +1,9 @@
 from flask import Flask, jsonify, request, abort
 import csv
 import os
-import re  # Import the regular expression module
+import re
 import logging
+import requests
 
 app = Flask(__name__)
 
@@ -14,6 +15,10 @@ CSV_FILE_PATH = os.path.join(os.path.dirname(__file__), '../data/loads.csv')
 
 # Global variable to store the loaded data
 cached_loads = None
+
+# FMCSA API configuration
+FMCSA_API_KEY = os.environ.get('FMCSA_API_KEY')
+FMCSA_API_URL = 'https://mobile.fmcsa.dot.gov/qc/services/carriers/{}'
 
 # Helper function to load CSV data into memory
 def load_csv_data():
@@ -42,6 +47,37 @@ def load_csv_data():
         abort(500, description="Internal Server Error: Unexpected error")
     return loads
 
+def validate_carrier(mc_number):
+    """
+    Validates the MC number using the FMCSA API.
+    """
+    if not FMCSA_API_KEY:
+        logging.error("FMCSA API key not found in environment variables")
+        return False, "FMCSA API key not configured"
+
+    try:
+        response = requests.get(
+            FMCSA_API_URL.format(mc_number),
+            headers={'X-API-Key': FMCSA_API_KEY}
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        allow_to_operate = data.get("allowToOperate") == "Y"
+        out_of_service = data.get("outOfService") == "N"
+
+        is_valid = allow_to_operate and not out_of_service
+
+        if not is_valid:
+            reason = "Carrier not allowed to operate" if not allow_to_operate else "Carrier is out of service"
+            return False, reason
+
+        return True, None
+
+    except requests.RequestException as e:
+        logging.error(f"Error validating carrier with FMCSA API: {e}")
+        return False, "Error communicating with FMCSA API"
+
 # Endpoint to retrieve load details by reference number
 @app.route('/loads/<reference_number>', methods=['GET'])
 def get_load_by_reference(reference_number):
@@ -54,9 +90,29 @@ def get_load_by_reference(reference_number):
     load = next((load for load in loads if load['reference_number'] == reference_number), None)
     
     if load:
+        # Validate carrier before returning load details
+        mc_number = request.args.get('mc_number')
+        if mc_number:
+            is_valid, error_message = validate_carrier(mc_number)
+            if not is_valid:
+                if error_message:
+                    logging.warning(f"Carrier validation failed for MC {mc_number}: {error_message}")
+                    abort(400, description=f"Carrier validation failed: {error_message}")
+                else:
+                    logging.warning(f"Carrier validation failed for MC {mc_number}: Unknown reason")
+                    abort(400, description="Carrier validation failed: Unknown reason")
         return jsonify(load)
     else:
         abort(404, description="Load not found")
+
+# New route for validating carrier
+@app.route('/validate_carrier/<mc_number>', methods=['GET'])
+def validate_carrier_route(mc_number):
+    is_valid, error_message = validate_carrier(mc_number)
+    if error_message:
+        logging.warning(f"Carrier validation failed for MC {mc_number}: {error_message}")
+        return jsonify({"valid": is_valid, "error": error_message}), 400
+    return jsonify({"valid": is_valid})
 
 # Error handler for 400 (Bad Request)
 @app.errorhandler(400)

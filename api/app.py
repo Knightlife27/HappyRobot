@@ -52,7 +52,7 @@ def load_csv_data():
     except Exception as e:
         logging.exception(f"Unexpected error loading CSV: {e}")
         abort(500, description="Internal Server Error: Unexpected error")
-    return loads
+    return cached_loads
 
 def validate_carrier(mc_number):
     """
@@ -152,6 +152,15 @@ def get_load_by_reference(reference_number):
 def validate_carrier_route():
     mc_number = request.args.get('mc_number')
     logging.info(f"Carrier validation requested for MC number: {mc_number}")
+
+    # WARNING: THIS VIOLATES FMCSA STANDARDS (MC NUMBERS MUST BE 10 DIGITS)
+    if not re.fullmatch(r'\d{7}', mc_number):
+        logging.warning(f"Invalid MC number format: {mc_number}")
+        return jsonify({
+            "valid": False,
+            "error": "Invalid MC number format. Must be exactly 7 digits."
+        }), 400
+
     is_valid, error_message = validate_carrier(mc_number)
     if error_message:
         logging.warning(f"Carrier validation failed for MC {mc_number}: {error_message}")

@@ -54,6 +54,18 @@ def load_csv_data():
         abort(500, description="Internal Server Error: Unexpected error")
     return cached_loads
 
+def validate_mc_number(mc_number):
+    try:
+        # Attempt to convert to integer directly. Handles standard integer format.
+        mc_number = int(float(mc_number))
+    except ValueError:
+        return False, "Invalid MC number format"
+
+    mc_number_str = str(mc_number)
+    if not re.fullmatch(r'\d{7}', mc_number_str):
+        return False, "MC number must be exactly 7 digits"
+    return True, None
+
 def validate_carrier(mc_number):
     """
     Validates the MC number using the FMCSA API.
@@ -121,10 +133,10 @@ def get_load_by_reference(reference_number):
     logging.info(f"Load details requested for reference number: {reference_number}")
     
     # Input validation: Check if the reference number is valid
-    if not re.match(r'^[a-zA-Z0-9]+$', reference_number):
+    if not re.fullmatch(r'\d{7}', reference_number):
         logging.warning(f"Invalid reference number provided: {reference_number}")
-        abort(400, description="Invalid reference number. Must be alphanumeric.")
-
+        abort(400, description="Invalid reference number. Must be exactly 7 digits.")
+    
     loads = load_csv_data()
     load = next((load for load in loads if load['reference_number'] == reference_number), None)
     
@@ -134,14 +146,14 @@ def get_load_by_reference(reference_number):
         mc_number = request.args.get('mc_number')
         if mc_number:
             logging.info(f"Validating carrier with MC number: {mc_number}")
+            is_valid, error_message = validate_mc_number(mc_number)
+            if not is_valid:
+                logging.warning(f"MC number validation failed: {error_message}")
+                abort(400, description=f"MC number validation failed: {error_message}")
             is_valid, error_message = validate_carrier(mc_number)
             if not is_valid:
-                if error_message:
-                    logging.warning(f"Carrier validation failed for MC {mc_number}: {error_message}")
-                    abort(400, description=f"Carrier validation failed: {error_message}")
-                else:
-                    logging.warning(f"Carrier validation failed for MC {mc_number}: Unknown reason")
-                    abort(400, description="Carrier validation failed: Unknown reason")
+                logging.warning(f"Carrier validation failed for MC {mc_number}: {error_message}")
+                abort(400, description=f"Carrier validation failed: {error_message}")
         return jsonify(load)
     else:
         logging.warning(f"Load not found for reference number: {reference_number}")
@@ -153,13 +165,10 @@ def validate_carrier_route():
     mc_number = request.args.get('mc_number')
     logging.info(f"Carrier validation requested for MC number: {mc_number}")
 
-    # WARNING: THIS VIOLATES FMCSA STANDARDS (MC NUMBERS MUST BE 10 DIGITS)
-    if not re.fullmatch(r'\d{7}', mc_number):
-        logging.warning(f"Invalid MC number format: {mc_number}")
-        return jsonify({
-            "valid": False,
-            "error": "Invalid MC number format. Must be exactly 7 digits."
-        }), 400
+    is_valid, error_message = validate_mc_number(mc_number)
+    if not is_valid:
+        logging.warning(f"MC number validation failed: {error_message}")
+        return jsonify({"valid": False, "error": error_message}), 400
 
     is_valid, error_message = validate_carrier(mc_number)
     if error_message:

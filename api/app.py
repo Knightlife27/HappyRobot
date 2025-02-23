@@ -4,11 +4,18 @@ import os
 import re
 import logging
 import requests
+from dotenv import load_dotenv
 
-app = Flask(__name__)
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Print API key for debugging (remove in production)
+logging.info(f"Loaded API Key: {os.environ.get('FMCSA_API_KEY')[:5]}...") # Only show first 5 characters
+
+app = Flask(__name__)
 
 # Path to the CSV file
 CSV_FILE_PATH = os.path.join(os.path.dirname(__file__), '../data/loads.csv')
@@ -17,8 +24,8 @@ CSV_FILE_PATH = os.path.join(os.path.dirname(__file__), '../data/loads.csv')
 cached_loads = None
 
 # FMCSA API configuration
-FMCSA_API_KEY = os.environ.get('FMCSA_API_KEY')
-FMCSA_API_URL = 'https://mobile.fmcsa.dot.gov/qc/services/carriers/{}'
+FMCSA_API_KEY = os.environ.get('FMCSA_API_KEY', '').strip()
+FMCSA_API_BASE_URL = 'https://mobile.fmcsa.dot.gov/qc/services/'
 
 # Helper function to load CSV data into memory
 def load_csv_data():
@@ -51,48 +58,82 @@ def validate_carrier(mc_number):
     """
     Validates the MC number using the FMCSA API.
     """
+    logging.info(f"Starting carrier validation for MC number: {mc_number}")
     if not FMCSA_API_KEY:
         logging.error("FMCSA API key not found in environment variables")
         return False, "FMCSA API key not configured"
 
     try:
-        response = requests.get(
-            FMCSA_API_URL.format(mc_number),
-            headers={'X-API-Key': FMCSA_API_KEY}
-        )
+        url = f"{FMCSA_API_BASE_URL}carriers/{mc_number}"
+        params = {
+            'webKey': FMCSA_API_KEY
+        }
+        logging.info(f"Sending request to FMCSA API: {url}")
+        logging.info(f"API Key being used: {FMCSA_API_KEY[:5]}...")  # Log first 5 characters of API key
+        
+        response = requests.get(url, params=params)
+        logging.info(f"Full URL being called: {response.url}")
+        logging.info(f"FMCSA API response status code: {response.status_code}")
+        logging.info(f"FMCSA API response headers: {response.headers}")
+        logging.debug(f"FMCSA API full response content: {response.text}")
+
         response.raise_for_status()
         data = response.json()
+        logging.debug(f"Parsed JSON data: {data}")
 
-        allow_to_operate = data.get("allowToOperate") == "Y"
-        out_of_service = data.get("outOfService") == "N"
+        # Check if the carrier data is present in the response
+        if not data or 'content' not in data or not data['content']:
+            logging.warning("No carrier data found in the API response")
+            return False, "No carrier data found"
+        
+        carrier_data = data['content']['carrier']
+        logging.info(f"Carrier data retrieved: {carrier_data}")
+
+        allow_to_operate = carrier_data.get("allowedToOperate") == "Y"
+        out_of_service = carrier_data.get("oosDate") is not None
 
         is_valid = allow_to_operate and not out_of_service
 
         if not is_valid:
             reason = "Carrier not allowed to operate" if not allow_to_operate else "Carrier is out of service"
+            logging.warning(f"Carrier validation failed: {reason}")
             return False, reason
 
+        logging.info("Carrier validation successful")
         return True, None
 
     except requests.RequestException as e:
         logging.error(f"Error validating carrier with FMCSA API: {e}")
-        return False, "Error communicating with FMCSA API"
+        if e.response is not None:
+            logging.error(f"Response status code: {e.response.status_code}")
+            logging.error(f"Response content: {e.response.text}")
+        return False, f"Error communicating with FMCSA API: {str(e)}"
+
+# New route for root URL
+@app.route('/', methods=['GET'])
+def home():
+    logging.info("Home route accessed")
+    return jsonify({"message": "Welcome to the HappyRobot API"}), 200
 
 # Endpoint to retrieve load details by reference number
 @app.route('/loads/<reference_number>', methods=['GET'])
 def get_load_by_reference(reference_number):
+    logging.info(f"Load details requested for reference number: {reference_number}")
+    
     # Input validation: Check if the reference number is valid
     if not re.match(r'^[a-zA-Z0-9]+$', reference_number):
+        logging.warning(f"Invalid reference number provided: {reference_number}")
         abort(400, description="Invalid reference number. Must be alphanumeric.")
 
-    logging.info(f"Fetching load for reference_number: {reference_number}")
     loads = load_csv_data()
     load = next((load for load in loads if load['reference_number'] == reference_number), None)
     
     if load:
+        logging.info(f"Load found for reference number {reference_number}")
         # Validate carrier before returning load details
         mc_number = request.args.get('mc_number')
         if mc_number:
+            logging.info(f"Validating carrier with MC number: {mc_number}")
             is_valid, error_message = validate_carrier(mc_number)
             if not is_valid:
                 if error_message:
@@ -103,15 +144,19 @@ def get_load_by_reference(reference_number):
                     abort(400, description="Carrier validation failed: Unknown reason")
         return jsonify(load)
     else:
+        logging.warning(f"Load not found for reference number: {reference_number}")
         abort(404, description="Load not found")
 
 # New route for validating carrier
-@app.route('/validate_carrier/<mc_number>', methods=['GET'])
-def validate_carrier_route(mc_number):
+@app.route('/validate_carrier', methods=['GET'])
+def validate_carrier_route():
+    mc_number = request.args.get('mc_number')
+    logging.info(f"Carrier validation requested for MC number: {mc_number}")
     is_valid, error_message = validate_carrier(mc_number)
     if error_message:
         logging.warning(f"Carrier validation failed for MC {mc_number}: {error_message}")
         return jsonify({"valid": is_valid, "error": error_message}), 400
+    logging.info(f"Carrier validation successful for MC {mc_number}")
     return jsonify({"valid": is_valid})
 
 # Error handler for 400 (Bad Request)
@@ -133,4 +178,5 @@ def internal_server_error(e):
     return jsonify(error=str(e)), 500
 
 if __name__ == '__main__':
+    logging.info("Starting the Flask application")
     app.run(debug=True)
